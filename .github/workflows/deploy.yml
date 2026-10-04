@@ -1,0 +1,60 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Only ever runs for main of this repository, on the VPS runner.
+    if: github.repository == 'pat5080/conceptassessor' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, conceptassessor]
+    timeout-minutes: 30
+    env:
+      APP_DIR: /opt/conceptassessor
+      HEALTH_URL: http://127.0.0.1:8600/health
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build image
+        run: |
+          docker build \
+            --file deploy/Dockerfile \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --tag "conceptassessor:${GITHUB_SHA}" \
+            --tag conceptassessor:latest \
+            .
+
+      - name: Restart service
+        run: |
+          install -m 644 deploy/compose.yaml "${APP_DIR}/compose.yaml"
+          docker compose --project-directory "${APP_DIR}" --file "${APP_DIR}/compose.yaml" up --detach --remove-orphans
+
+      - name: Check it answers
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error --max-time 2 "${HEALTH_URL}"; then
+              echo
+              echo "Healthy after ${attempt} attempt(s)."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "No healthy answer from ${HEALTH_URL}" >&2
+          docker logs --tail 50 conceptassessor >&2 || true
+          exit 1
+
+      - name: Remove old images
+        if: success()
+        run: |
+          docker images conceptassessor --format '{{.Tag}}' \
+            | grep -v -e '^latest$' -e "^${GITHUB_SHA}$" \
+            | xargs -r -I{} docker rmi "conceptassessor:{}" || true

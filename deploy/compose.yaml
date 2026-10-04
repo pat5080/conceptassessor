@@ -1,0 +1,19 @@
+# Installed by the deploy workflow to /opt/conceptassessor/compose.yaml on the VPS.
+# The image is built by the workflow; this file only runs it.
+name: conceptassessor
+
+services:
+  app:
+    image: conceptassessor:latest
+    container_name: conceptassessor
+    restart: unless-stopped
+    # /opt/conceptassessor/.env on the VPS; holds the API key, never committed.
+    env_file: .env
+    environment:
+      PORT: "8000"
+      SESSIONS_DIR: /data/sessions
+    ports:
+      # Loopback only: `tailscale serve` puts HTTPS in front for the tailnet.
+      - "127.0.0.1:8600:8000"
+    volumes:
+      - /srv/conceptassessor/sessions:/data/sessions
